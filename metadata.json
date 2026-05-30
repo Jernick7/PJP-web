@@ -1,0 +1,6 @@
+{
+  "name": "Poocha Janatha Party",
+  "description": "Interactive platform for the Poocha Janatha Party (PJP)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
