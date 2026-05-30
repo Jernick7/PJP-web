@@ -3,10 +3,32 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import nodemailer from "nodemailer";
+import { createClient } from "@supabase/supabase-js";
 
 async function startServer() {
-  const app = express();
+  const app = reportExpressSetup();
   const PORT = 3000;
+
+  // --- Helper to verify Express framework compatibility ---
+  function reportExpressSetup() {
+    return express();
+  }
+
+  // --- Initialize Supabase Client ---
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY;
+
+  let supabase: any = null;
+  if (supabaseUrl && supabaseKey) {
+    try {
+      supabase = createClient(supabaseUrl, supabaseKey);
+      console.log("Supabase Client initialized successfully.");
+    } catch (err: any) {
+      console.error("Failed to initialize Supabase client:", err.message || err);
+    }
+  } else {
+    console.log("Supabase credentials missing. Falling back to in-memory cache / static mock states.");
+  }
 
   // Middleware
   app.use(express.json({ limit: "10mb" }));
@@ -26,13 +48,65 @@ async function startServer() {
   let pawsEnrolledCount = 0;
 
   // Endpoint to get the enrollment count
-  app.get("/api/metrics/paws", (req, res) => {
+  app.get("/api/metrics/paws", async (req, res) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from("pjp_metrics")
+          .select("paws_enrolled")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          pawsEnrolledCount = data.paws_enrolled || 0;
+        }
+      } catch (err: any) {
+        console.error("Supabase select metrics error (falling back to temporary state):", err.message || err);
+      }
+    }
     res.json({ count: pawsEnrolledCount });
   });
 
   // Endpoint to increment the enrollment count
-  app.post("/api/metrics/paws/increment", (req, res) => {
+  app.post("/api/metrics/paws/increment", async (req, res) => {
     pawsEnrolledCount++;
+    if (supabase) {
+      try {
+        const { data: selectData, error: selectError } = await supabase
+          .from("pjp_metrics")
+          .select("paws_enrolled")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (selectError) {
+          throw selectError;
+        }
+
+        let currentPaws = selectData ? (selectData.paws_enrolled || 0) : 0;
+        const nextPaws = currentPaws + 1;
+
+        const { error: upsertError } = await supabase
+          .from("pjp_metrics")
+          .upsert({ id: 1, paws_enrolled: nextPaws });
+
+        if (upsertError) {
+          // If upsert fails, try a direct update query
+          const { error: updateError } = await supabase
+            .from("pjp_metrics")
+            .update({ paws_enrolled: nextPaws })
+            .eq("id", 1);
+          if (updateError) throw updateError;
+        }
+
+        pawsEnrolledCount = nextPaws;
+      } catch (err: any) {
+        console.error("Supabase metrics increment error (falling back to temporary state):", err.message || err);
+      }
+    }
     res.json({ count: pawsEnrolledCount });
   });
 
@@ -168,8 +242,9 @@ UNITY • DISCIPLINE • SERVICE`;
     }
   });
 
-  // --- In-Memory Citizen Wall of Voices State & Endpoints ---
-  const voicesList = [
+  // --- Citizen Wall of Voices State & Endpoints ---
+  // In-memory fallback dataset for when client is unconfigured or encounters connection errors
+  const voicesListFallback = [
     { 
       id: "V-001", 
       name: "Suresh PJP-KK", 
@@ -196,37 +271,109 @@ UNITY • DISCIPLINE • SERVICE`;
     }
   ];
 
-  app.get("/api/voices", (req, res) => {
-    res.json(voicesList);
+  // Helper to format timestamps to standard YYYY-MM-DD HH:mm:ss representation
+  function formatTimestamp(rawDate: string | null | undefined): string {
+    if (!rawDate) return "N/A";
+    try {
+      const dateObj = new Date(rawDate);
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const hours = String(dateObj.getHours()).padStart(2, '0');
+      const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+      const seconds = String(dateObj.getSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    } catch {
+      return String(rawDate);
+    }
+  }
+
+  app.get("/api/voices", async (req, res) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from("wall_of_voices")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          const formatted = data.map((v: any) => ({
+            id: v.id ? String(v.id) : `V-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+            name: v.name || "Anonymous",
+            message: v.message || "",
+            timestamp: formatTimestamp(v.created_at)
+          }));
+          return res.json(formatted);
+        }
+      } catch (err: any) {
+        console.error("Supabase wall_of_voices SELECT query error (falling back to static state):", err.message || err);
+      }
+    }
+    // Fallback gracefully
+    res.json(voicesListFallback);
   });
 
-  app.post("/api/voices", (req, res) => {
+  app.post("/api/voices", async (req, res) => {
     try {
       const { name, message } = req.body;
       if (!name || !message) {
         return res.status(400).json({ error: "Nickname and Broadcast Message are required." });
       }
 
-      const id = `V-00${voicesList.length + 1}`;
+      const cleanName = name.slice(0, 30);
+      const cleanMessage = message.slice(0, 300);
+
+      if (supabase) {
+        try {
+          // Perform an asynchronous insert into 'wall_of_voices'
+          const { error: insertError } = await supabase
+            .from("wall_of_voices")
+            .insert([{ name: cleanName, message: cleanMessage }]);
+
+          if (insertError) {
+            throw insertError;
+          }
+
+          // Fetch updated rows ordered by created_at DESC
+          const { data, error: fetchError } = await supabase
+            .from("wall_of_voices")
+            .select("*")
+            .order("created_at", { ascending: false });
+
+          if (fetchError) {
+            throw fetchError;
+          }
+
+          if (data) {
+            const formatted = data.map((v: any) => ({
+              id: v.id ? String(v.id) : `V-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+              name: v.name || "Anonymous",
+              message: v.message || "",
+              timestamp: formatTimestamp(v.created_at)
+            }));
+            return res.json({ success: true, voices: formatted });
+          }
+        } catch (err: any) {
+          console.error("Supabase wall_of_voices error (falling back to in-memory):", err.message || err);
+        }
+      }
+
+      // If Supabase fails or isn't connected, manage via the transient fallback array
       const now = new Date();
-      // Format as YYYY-MM-DD HH:mm:ss
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padEnd(2, '0');
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      const seconds = String(now.getSeconds()).padStart(2, '0');
-      const timestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-
-      const newVoice = {
-        id,
-        name: name.slice(0, 30),
-        message: message.slice(0, 300),
-        timestamp
+      const timestampStr = formatTimestamp(now.toISOString());
+      const newVoiceLocal = {
+        id: `V-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+        name: cleanName,
+        message: cleanMessage,
+        timestamp: timestampStr
       };
-
-      voicesList.unshift(newVoice); // Newest on top
-      res.json({ success: true, voices: voicesList });
+      
+      voicesListFallback.unshift(newVoiceLocal);
+      res.json({ success: true, voices: voicesListFallback });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to broadcast message to the pride." });
     }
