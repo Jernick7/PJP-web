@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { toPng } from 'html-to-image';
-import { Download, Loader2, Send, PawPrint } from 'lucide-react';
+import { Download, Loader2, Send, PawPrint, Upload } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const CONSTITUENCIES = [
@@ -18,8 +18,10 @@ export function IDCardFactory() {
   const [status, setStatus] = useState<'idle' | 'generating' | 'sending' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [generatedSerial, setGeneratedSerial] = useState('PJP-KK-2026-B23XOD');
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   
   const cardRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const generateSerial = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -28,6 +30,15 @@ export function IDCardFactory() {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return `PJP-KK-2026-${result}`;
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Creates a lightweight temporary local preview string
+      const localUrl = URL.createObjectURL(file);
+      setPhotoPreview(localUrl);
+    }
   };
 
   const handleGenerateAndSend = async (e: React.FormEvent) => {
@@ -130,6 +141,27 @@ export function IDCardFactory() {
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
               />
             </div>
+            
+            {/* NEW: Profile Picture Upload Block */}
+            <div>
+              <label className="block text-xs font-mono text-[var(--color-pjp-green)] mb-1">DOSSIER BIOMETRIC PHOTO</label>
+              <input 
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full bg-black border border-gray-800 text-gray-400 hover:text-white font-mono p-2 flex items-center justify-center gap-2 hover:border-[var(--color-pjp-orange)] transition-colors text-sm shadow-[0_0_5px_rgba(0,100,0,0.1)_inset]"
+              >
+                <Upload size={16} className="text-[var(--color-pjp-green)]" />
+                {photoPreview ? "CHANGE PROFILE PHOTO" : "UPLOAD APPLICANT PHOTO"}
+              </button>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-mono text-[var(--color-pjp-green)] mb-1">CONSTITUENCY</label>
@@ -188,7 +220,7 @@ export function IDCardFactory() {
              {/* Using transform scale to fit the 640x380 card perfectly in its container */}
              <div className="relative w-full pb-[59.375%] /* 380/640 */">
                 <div className="absolute top-0 left-0 origin-top-left w-[640px] h-[380px] pointer-events-none" style={{ transform: 'scale(calc(100% / 640 * min(500, 100vw - 32px)))' }}>
-                   
+                    
                    {/* ---- THE ACTUAL ID CARD RENDER TARGET ---- */}
                    <div 
                       ref={cardRef} 
@@ -231,9 +263,19 @@ export function IDCardFactory() {
                         
                         {/* Grid Data Section */}
                         <div className="flex gap-8 h-[160px]">
-                          {/* Left Column: Photo */}
-                          <div className="w-[124px] h-[155px] border-2 border-[var(--color-pjp-green)] bg-[#020302] flex flex-col justify-center items-center text-center p-2 relative shadow-[inset_0_0_20px_rgba(0,100,0,0.5)]">
-                            <div className="text-[10px] text-[var(--color-pjp-green)] font-mono font-bold uppercase tracking-wider opacity-80 leading-relaxed">APPLICANT<br/>PHOTO<br/>HERE</div>
+                          {/* Left Column: Photo Frame */}
+                          <div className="w-[124px] h-[155px] border-2 border-[var(--color-pjp-green)] bg-[#020302] flex flex-col justify-center items-center text-center relative overflow-hidden shadow-[inset_0_0_20px_rgba(0,100,0,0.5)]">
+                            {photoPreview ? (
+                              <img 
+                                src={photoPreview} 
+                                alt="Applicant Biometric" 
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="text-[10px] text-[var(--color-pjp-green)] font-mono font-bold uppercase tracking-wider opacity-80 leading-relaxed p-2">
+                                APPLICANT<br/>PHOTO<br/>REQUIRED
+                              </div>
+                            )}
                             
                             {/* Sniper brackets */}
                             <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-[var(--color-pjp-orange)] drop-shadow-[0_0_3px_rgba(255,153,51,0.8)]"></div>
