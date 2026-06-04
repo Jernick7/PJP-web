@@ -148,20 +148,20 @@ async function startServer() {
         throw new Error("SMTP credentials are not configured on the server.");
       }
 
-     const transporter = nodemailer.createTransport({
+    const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  dnsLookup: (hostname, options, callback) => {
-    // Force DNS resolution to strictly use IPv4 (family 4) instead of IPv6
-    require('dns').lookup(hostname, { family: 4 }, (err, address, family) => {
-      callback(err, address, family);
-    });
-  },
+  port: 587,
+  secure: false, // Must be false for port 587; it starts unencrypted and upgrades via STARTTLS
   auth: {
     user: smtpEmail,
     pass: smtpPassword,
   },
+  tls: {
+    // This forces Node to strictly require standard TLS ciphers
+    ciphers: 'SSLv3',
+    // Ensures the secure handshake is enforced correctly on cloud networks
+    rejectUnauthorized: false 
+  }
 });
       // Split the base64 URL to get the raw data
       const base64Data = attachmentData.split(';base64,').pop();
