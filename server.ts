@@ -137,32 +137,42 @@ async function startServer() {
   });
 
   // SMTP Email Relay Endpoint
+ // SMTP Email Relay Endpoint
   app.post("/api/relay/send", async (req, res) => {
     try {
       const { email, name, attachmentName, attachmentData } = req.body;
 
-      const smtpEmail = process.env.SMTP_EMAIL;
-      const smtpPassword = process.env.SMTP_PASSWORD;
+      // Force variables to check both standard namings so it never reads empty
+      const smtpEmail = process.env.SMTP_EMAIL || process.env.SMTP_USER;
+      const smtpPassword = process.env.SMTP_PASSWORD || process.env.SMTP_PASS;
 
       if (!smtpEmail || !smtpPassword) {
-        throw new Error("SMTP credentials are not configured on the server.");
+        throw new Error("SMTP credentials are not configured on the server. Check Environment settings.");
       }
 
-    const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // Must be false for port 587; it starts unencrypted and upgrades via STARTTLS
-  auth: {
-    user: smtpEmail,
-    pass: smtpPassword,
-  },
-  tls: {
-    // This forces Node to strictly require standard TLS ciphers
-    ciphers: 'SSLv3',
-    // Ensures the secure handshake is enforced correctly on cloud networks
-    rejectUnauthorized: false 
-  }
-});
+      // Re-import native dns inside the route to safeguard esbuild bundling compatibility
+      const dns = require('dns');
+
+      const transporter = nodemailer.createTransport({
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false, // Must be false for port 587; upgrades via STARTTLS
+        auth: {
+          user: smtpEmail,
+          pass: smtpPassword,
+        },
+        dnsLookup: (hostname, options, callback) => {
+          // Strictly force IPv4 lookup resolution to bypass Render's IPv6 block
+          dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+            callback(err, address, family);
+          });
+        },
+        tls: {
+          ciphers: 'SSLv3',
+          rejectUnauthorized: false 
+        }
+      });
+
       // Split the base64 URL to get the raw data
       const base64Data = attachmentData.split(';base64,').pop();
 
@@ -187,7 +197,6 @@ async function startServer() {
       res.status(500).json({ error: error.message || "Failed to relay official transmission." });
     }
   });
-
   // --- Executive Pipeline Secure Mail Feedback ---
   app.post("/api/executive/feedback", async (req, res) => {
     try {
