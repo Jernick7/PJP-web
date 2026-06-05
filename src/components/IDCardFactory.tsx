@@ -90,6 +90,8 @@ export function IDCardFactory() {
         body: JSON.stringify({
           email: formData.email,
           name: formData.name,
+          constituency: formData.constituency, // Added for database logging
+          alignment: formData.alignment,       // Added for database logging
           attachmentName: `PJP_Dossier_${serial}.png`,
           attachmentData: dataUrl
         })
